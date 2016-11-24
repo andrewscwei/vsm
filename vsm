@@ -400,7 +400,11 @@ function vsm_manage
     if [ "$1" == "-h" ]; then
         vsm_help "manage"
     else
-        nano "$PATH_REPOSITORY"
+        if hash subl 2>/dev/null; then
+            subl "$PATH_REPOSITORY"
+        else
+            nano "$PATH_REPOSITORY"
+        fi
     fi
 }
 
@@ -426,7 +430,7 @@ function vsm_ssh
     VSM_GET_ENTRY $1
 
     if [[ $VSM_TMP_ENTRY_KEY != "" ]]; then
-        echo -e "${COLOR_BLUE}vsm: ${COLOR_GREEN}OK ${COLOR_RESET}Opening SSH connection ${COLOR_CYAN}$VSM_TMP_ENTRY_KEY${COLOR_RESET}..."
+        echo -e "${COLOR_BLUE}vsm: ${COLOR_GREEN}OK ${COLOR_RESET}Opening SSH connection to ${COLOR_CYAN}$VSM_TMP_ENTRY_KEY${COLOR_RESET}..."
         if [ "$VSM_TMP_ENTRY_CERT" != "" ]; then
             ssh -i $VSM_TMP_ENTRY_CERT $VSM_TMP_ENTRY_HOST
         else
