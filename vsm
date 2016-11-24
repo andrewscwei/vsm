@@ -1,0 +1,519 @@
+#!/bin/bash
+#
+# VARS SSH manager (vsm).
+#
+# (c) Andrew Wei
+#
+# This software is released under the MIT License:
+# http://www.opensource.org/licenses/mit-license.php
+#
+
+#
+# Colors.
+#
+COLOR_PREFIX="\x1b["
+COLOR_RESET=$COLOR_PREFIX"0m"
+COLOR_BLACK=$COLOR_PREFIX"0;30m"
+COLOR_RED=$COLOR_PREFIX"0;31m"
+COLOR_GREEN=$COLOR_PREFIX"0;32m"
+COLOR_ORANGE=$COLOR_PREFIX"0;33m"
+COLOR_BLUE=$COLOR_PREFIX"0;34m"
+COLOR_PURPLE=$COLOR_PREFIX"0;35m"
+COLOR_CYAN=$COLOR_PREFIX"0;36m"
+COLOR_LIGHT_GRAY=$COLOR_PREFIX"0;37m"
+
+#
+# Paths.
+#
+PATH_VSM_ROOT="/usr/local/bin"
+PATH_REPOSITORY=$PATH_VSM_ROOT"/.vsm"
+PATH_HOSTS="/etc/hosts"
+PATH_VHOSTS="/etc/apache2/extra/httpd-vhosts.conf"
+
+#
+# @global
+#
+# Serializes the repository into an array of project entries in the form of
+# "key":"host" string pair. This operation stores the array of project entries
+# into VSM_ENTRY_LIST and its length into VSM_ENTRY_COUNT.
+#
+function VSM_SERIALIZE_REPOSITORY
+{
+    # Reset global variable.
+    VSM_ENTRY_LIST=()
+
+    if [ -e $PATH_REPOSITORY ]; then
+        # Read line-by-line.
+        while read l
+        do
+            if [[ $l == *:* ]]; then
+                VSM_ENTRY_LIST=("${VSM_ENTRY_LIST[@]}" "$l")
+            else
+                continue
+            fi
+        done < $PATH_REPOSITORY
+    fi
+
+    VSM_ENTRY_COUNT=${#VSM_ENTRY_LIST[@]}
+}
+
+#
+# @global
+#
+# Parses a project entry in the form of "key":"host" string pair and stores
+# the key and the host into VSM_TMP_ENTRY_KEY and VSM_TMP_ENTRY_HOST respectively.
+#
+# @param $1 The "key":"host" string pair.
+#
+function VSM_DECODE_ENTRY
+{
+    if [ "$1" == "" ]; then return; fi
+
+    # Configure IFS to split the pair appropriately while preserving
+    # whitespaces.
+    OIFS=$IFS
+    IFS=":>"
+
+    # Grab the key from the "key":"host" string pair.
+    local entry=($1)
+    local key=${entry[0]}
+    local host=${entry[1]}
+    local cert=${entry[2]}
+
+    # Restore IFS.
+    IFS=$OIFS
+
+    # Filter out quotations.
+    key=${key//\"/}
+    key=${key//\'/}
+    host=${host//\"/}
+    host=${host//\'/}
+    cert=${cert//\"/}
+    cert=${cert//\'/}
+
+    # Store the key and host globally.
+    VSM_TMP_ENTRY_KEY="$key"
+    VSM_TMP_ENTRY_HOST="$host"
+    VSM_TMP_ENTRY_CERT="$cert"
+}
+
+#
+# @global
+#
+# Looks up the vsm repo by key or index and stores the
+# matching entry globally.
+#
+# @param $1 Entry key or index
+#
+function VSM_GET_ENTRY
+{
+    # Check if getting project pair by alias or index.
+    [[ $1 =~ ^-?[0-9]+$ ]] && use_idx=1 || use_idx=0
+
+    if (( $use_idx == 1 )); then
+        VSM_GET_ENTRY_BY_INDEX $1
+    else
+        VSM_GET_ENTRY_BY_KEY $1
+    fi
+}
+
+#
+# @global
+#
+# Looks up the vsm repo by entry key and stores the matching entry globally.
+#
+# @param $1 Entry key
+#
+function VSM_GET_ENTRY_BY_KEY
+{
+    if [ "$1" != "" ]; then
+        VSM_SERIALIZE_REPOSITORY
+
+        # Iterate through the list of projects.
+        for (( i=1; i<=$VSM_ENTRY_COUNT; i++ ))
+        do
+            VSM_DECODE_ENTRY "${VSM_ENTRY_LIST[$[i-1]]}"
+
+            if [ "$VSM_TMP_ENTRY_KEY" == "$1" ]; then
+                return
+            fi
+        done
+    fi
+
+    VSM_TMP_ENTRY_KEY=""
+    VSM_TMP_ENTRY_HOST=""
+    VSM_TMP_ENTRY_CERT=""
+}
+
+#
+# @global
+#
+# Looks up the vsm repo by entry index and stores the matching entry globally.
+#
+# @param $1 Entry index
+#
+function VSM_GET_ENTRY_BY_INDEX
+{
+    if [ "$1" != "" ]; then
+        VSM_SERIALIZE_REPOSITORY
+
+        # Iterate through the list of projects.
+        for (( i=1; i<=$VSM_ENTRY_COUNT; i++ ))
+        do
+            VSM_DECODE_ENTRY "${VSM_ENTRY_LIST[$[i-1]]}"
+
+            if (( $i == $1 )); then
+                return
+            fi
+        done
+    fi
+
+    VSM_TMP_ENTRY_KEY=""
+    VSM_TMP_ENTRY_HOST=""
+    VSM_TMP_ENTRY_CERT=""
+}
+
+#
+# Displays the vsm directory.
+#
+function vsm_directory
+{
+    echo
+    echo -e "Usage: ${COLOR_BLUE}vsm ${COLOR_CYAN}<command>${COLOR_RESET}"
+    echo
+    echo -e "where ${COLOR_CYAN}<command>${COLOR_RESET} is one of:"
+    vsm_show_commands
+    echo
+}
+
+#
+# Displays the vsm help directory.
+#
+function vsm_help_directory
+{
+    echo
+    echo -e "Usage: ${COLOR_BLUE}vsm ${COLOR_CYAN}help <command>${COLOR_RESET} or ${COLOR_BLUE}vsm ${COLOR_CYAN}<command> -h${COLOR_RESET} "
+    echo
+    echo -e "where ${COLOR_CYAN}<command>${COLOR_RESET} is one of:"
+    vsm_show_commands
+    echo
+}
+
+#
+# Echoes available vsm commands.
+#
+function vsm_show_commands
+{
+    echo -e "${COLOR_CYAN}     add${COLOR_RESET} - Creates a new SSH host/key/cert entry in the repo."
+    echo -e "${COLOR_CYAN}   clean${COLOR_RESET} - Cleans the repo by reconsiling invalid entries."
+    echo -e "${COLOR_CYAN}    help${COLOR_RESET} - Provides access to additional info regarding specific vsm commands."
+    echo -e "${COLOR_CYAN}    list${COLOR_RESET} - Lists all current entries in the repo."
+    echo -e "${COLOR_CYAN}  manage${COLOR_RESET} - Edits the repo file directly in the default text editor ${COLOR_PURPLE}(USE WITH CAUTION)${COLOR_RESET}."
+    echo -e "${COLOR_CYAN}     ssh${COLOR_RESET} - Opens an SSH connection to a specific entry."
+    echo -e "${COLOR_CYAN}  remove${COLOR_RESET} - Removes an entry from the repo."
+    echo -e "${COLOR_CYAN} version${COLOR_RESET} - Shows the version of ${COLOR_BLUE}vsm${COLOR_RESET}."
+}
+
+#
+# Displays help documents regarding vsm.
+#
+function vsm_help
+{
+    if [ "$1" == "" ] || [ "$1" == "-h" ]; then
+        vsm_help_directory
+        return
+    fi
+
+    echo
+
+    if [ "$1" == "add" ]; then
+        echo -e "${COLOR_BLUE}vsm: ${COLOR_PURPLE}HELP ${COLOR_BLUE}vsm ${COLOR_CYAN}add <key> <host> <cert>${COLOR_RESET}"
+        echo
+        echo -e "Creates a new entry in the vsm repo with <key> mapped to <host> and optional <cert>. If there already exists an entry with the same key, it will be overwritten."
+
+    elif [ "$1" == "clean" ]; then
+        echo -e "${COLOR_BLUE}vsm: ${COLOR_PURPLE}HELP ${COLOR_BLUE}vsm ${COLOR_CYAN}clean${COLOR_RESET}"
+        echo
+        echo -e "Scans the repo and reconsiles invalid entries."
+
+    elif [ "$1" == "list" ] || [ "$1" == "ls" ]; then
+        echo -e "${COLOR_BLUE}vsm: ${COLOR_PURPLE}HELP ${COLOR_BLUE}vsm ${COLOR_CYAN}list${COLOR_RESET}"
+        echo
+        echo -e "Lists all the current entries in the vsm repo."
+
+    elif [ "$1" == "manage" ]; then
+        echo -e "${COLOR_BLUE}vsm: ${COLOR_PURPLE}HELP ${COLOR_BLUE}vsm ${COLOR_CYAN}manage${COLOR_RESET}"
+        echo
+        echo -e "Edits the vsm repo file directly in the default text editor ${COLOR_PURPLE}(USE WITH CAUTION)${COLOR_RESET}."
+
+    elif [ "$1" == "ssh" ]; then
+        echo -e "${COLOR_BLUE}vsm: ${COLOR_PURPLE}HELP ${COLOR_BLUE}vsm ${COLOR_CYAN}ssh <key_or_index>${COLOR_RESET}"
+        echo
+        echo -e "Opens an SSH connection to the host specified by ${COLOR_CYAN}<key_or_index>${COLOR_RESET} in the repo."
+
+    elif [ "$1" == "remove" ] || [ "$1" == "rm" ]; then
+        echo -e "${COLOR_BLUE}vsm: ${COLOR_PURPLE}HELP ${COLOR_BLUE}vsm ${COLOR_CYAN}remove <key_or_index>${COLOR_RESET}"
+        echo
+        echo -e "Removes an entry specified by ${COLOR_CYAN}<key_or_index>${COLOR_RESET} from the vsm repository."
+
+    else
+        echo -e "${COLOR_BLUE}vsm: ${COLOR_PURPLE}HELP ${COLOR_RESET}No help data available regarding ${COLOR_RED}$1${COLOR_RESET} at this point"
+    fi
+
+    echo
+}
+
+#
+# Adds to the vsm the current directory associated with the specified project alias.
+#
+# @param $1 Alias of project.
+#
+function vsm_add
+{
+    # Help.
+    if [ "$1" == "-h" ]; then
+        vsm_help "add"
+        return
+    fi
+
+    # Sanity checks.
+    if [ "$1" == "" ]; then
+        echo -e "${COLOR_BLUE}vsm: ${COLOR_RED}ERR! ${COLOR_RESET}Please specify key"
+        return
+    fi
+
+    if [ "$2" == "" ]; then
+        echo -e "${COLOR_BLUE}vsm: ${COLOR_RED}ERR! ${COLOR_RESET}Please specify host"
+        return
+    fi
+
+    VSM_SERIALIZE_REPOSITORY
+
+    local buffer=""
+    local check=0
+
+    # Iterate through the list of entries.
+    for (( i=1; i<=$VSM_ENTRY_COUNT; i++ ))
+    do
+        local entry=${VSM_ENTRY_LIST[$[i-1]]}
+
+        VSM_DECODE_ENTRY "$entry"
+
+        # If the specified entry key already exists...
+        if [ "$VSM_TMP_ENTRY_KEY" == "$1" ]; then
+            check=1
+            buffer="$buffer$VSM_TMP_ENTRY_KEY:$2>$3\n"
+        # Else just add the current line to the output buffer.
+        else
+            buffer="$buffer$entry\n"
+        fi
+    done
+
+    if [ $check == 0 ]; then
+        buffer="$buffer$1:$2>$3\n"
+        echo -e "${COLOR_BLUE}vsm: ${COLOR_GREEN}OK ${COLOR_RESET}Mapped ${COLOR_CYAN}$1 ${COLOR_RESET}to ${COLOR_CYAN}$2${COLOR_RESET}"
+    else
+        echo -e "${COLOR_BLUE}vsm: ${COLOR_GREEN}OK ${COLOR_RESET}Remapped ${COLOR_CYAN}$1${COLOR_RESET} to ${COLOR_CYAN}$2${COLOR_RESET}"
+    fi
+
+    echo -e $buffer > $PATH_REPOSITORY
+
+    VSM_SERIALIZE_REPOSITORY
+}
+
+#
+# Cleans the current vsm repo.
+#
+function vsm_clean
+{
+    # Help.
+    if [ "$1" == "-h" ]; then
+        vsm_help "clean"
+        return
+    fi
+
+    VSM_SERIALIZE_REPOSITORY
+
+    local count=0
+    local buffer=""
+
+    # Iterate through the list of projects.
+    for (( i=1; i<=$VSM_ENTRY_COUNT; i++ ))
+    do
+        local entry=${VSM_ENTRY_LIST[$[i-1]]}
+
+        VSM_DECODE_ENTRY "$entry"
+
+        # Store entry in buffer if it is valid. If invalid it will not be 
+        # recorded, thus 'cleaned'.
+        if [ "$entry" != "" ] && [ "$VSM_TMP_ENTRY_KEY" != "" ] && [ "$VSM_TMP_ENTRY_HOST" != "" ]; then
+            buffer="$buffer$entry\n"
+        else
+            count=$[count+1]
+        fi
+    done
+
+    echo -e $buffer > $PATH_REPOSITORY
+    echo -e "${COLOR_BLUE}vsm: ${COLOR_GREEN}OK ${COLOR_RESET}Reconciled $count entr(ies)"
+}
+
+#
+# Lists all the entries in the vsm repo.
+#
+function vsm_list
+{
+    # Help.
+    if [ "$1" == "-h" ]; then
+        vsm_help "list"
+        return
+    fi
+
+    # Update VSM_ENTRY_LIST array.
+    VSM_SERIALIZE_REPOSITORY
+
+    if (( $VSM_ENTRY_COUNT == 0 )); then
+        echo -e "${COLOR_BLUE}vsm: ${COLOR_RED}ERR! ${COLOR_RESET}There are no entries in the repository."
+    else
+        echo -e "${COLOR_BLUE}vsm: ${COLOR_RESET}Found ${COLOR_PURPLE}$VSM_ENTRY_COUNT${COLOR_RESET} entr(ies)"
+
+        for (( i=1; i<=$VSM_ENTRY_COUNT; i++ ))
+        do
+            local pair=${VSM_ENTRY_LIST[$[i-1]]}
+
+            VSM_DECODE_ENTRY "$pair"
+
+            if [ "$VSM_TMP_ENTRY_CERT" == "" ]; then
+                echo -e "    $i. ${COLOR_CYAN}$VSM_TMP_ENTRY_KEY${COLOR_RESET}: $VSM_TMP_ENTRY_HOST"
+            else
+                echo -e "    $i. ${COLOR_CYAN}$VSM_TMP_ENTRY_KEY${COLOR_RESET}: $VSM_TMP_ENTRY_HOST ($VSM_TMP_ENTRY_CERT)"
+            fi
+        done
+    fi
+}
+
+#
+# Opens the vsm repo file in the default text editor.
+#
+function vsm_manage
+{
+    # Help.
+    if [ "$1" == "-h" ]; then
+        vsm_help "manage"
+    else
+        nano "$PATH_REPOSITORY"
+    fi
+}
+
+#
+# Opens an SSH connection for the specified entry. Either specify the entry key
+# or its index.
+#
+# @param $1 Entry alias or index
+#
+function vsm_ssh
+{
+    # Help.
+    if [ "$1" == "-h" ]; then
+        vsm_help "ssh"
+        return
+    fi
+
+    if [ "$1" == "" ]; then
+        echo -e "${COLOR_BLUE}vsm: ${COLOR_RED}ERR! ${COLOR_RESET}Please specify entry key or index"
+        return
+    fi
+
+    VSM_GET_ENTRY $1
+
+    if [[ $VSM_TMP_ENTRY_KEY != "" ]]; then
+        echo -e "${COLOR_BLUE}vsm: ${COLOR_GREEN}OK ${COLOR_RESET}Opening SSH connection ${COLOR_CYAN}$VSM_TMP_ENTRY_KEY${COLOR_RESET}..."
+        if [ "$VSM_TMP_ENTRY_CERT" != "" ]; then
+            ssh -i $VSM_TMP_ENTRY_CERT $VSM_TMP_ENTRY_HOST
+        else
+            ssh $VSM_TMP_ENTRY_HOST
+        fi
+    else
+        echo -e "${COLOR_BLUE}vsm: ${COLOR_RED}ERR! ${COLOR_RESET}Entry with key ${COLOR_CYAN}$1${COLOR_RESET} not found"
+    fi
+}
+
+#
+# Removes an entry from vsm. Either specify the key the index.
+#
+# @param $1 Entry key or index
+#
+function vsm_remove
+{
+    # Help.
+    if [ "$1" == "-h" ]; then
+        vsm_help "remove"
+        return
+    fi
+
+    if [ "$1" == "" ]; then
+        echo -e "${COLOR_BLUE}vsm: ${COLOR_RED}ERR! ${COLOR_RESET}Entry key/index must be specified"
+        return
+    fi
+
+    [[ $1 =~ ^-?[0-9]+$ ]] && use_idx=1 || use_idx=0
+
+    VSM_SERIALIZE_REPOSITORY
+
+    local removed=0
+    local buffer=""
+
+    # Iterate through the list of entries.
+    for (( i=1; i<=$VSM_ENTRY_COUNT; i++ ))
+    do
+        local entry=${VSM_ENTRY_LIST[$[i-1]]}
+        local skip=0
+
+        VSM_DECODE_ENTRY "$entry"
+
+        # If arg is a project index...
+        if (( $use_idx == 1 )) && (( $i == $1 )); then
+            skip=1
+            removed=1
+
+            echo -e "${COLOR_BLUE}vsm: ${COLOR_GREEN}OK ${COLOR_RESET}Removed entry ${COLOR_CYAN}$VSM_TMP_ENTRY_KEY${COLOR_RESET} at index ${COLOR_PURPLE}$i${COLOR_RESET}"
+
+        # Else if arg is a project alias...
+        elif (( $use_idx == 0 )) && [ "$VSM_TMP_ENTRY_KEY" == "$1" ]; then
+            skip=1
+            removed=1
+
+            echo -e "${COLOR_BLUE}vsm: ${COLOR_GREEN}OK ${COLOR_RESET}Removed entry ${COLOR_CYAN}$VSM_TMP_ENTRY_KEY${COLOR_RESET} at index ${COLOR_PURPLE}$i${COLOR_RESET}"
+        fi
+
+        # If there was no match for this loop...
+        if (( $skip == 0 )); then
+            buffer="$buffer$entry\n"
+        fi
+    done
+
+    # If nothing was removed, throw error.
+    if (( $removed == 0 )); then
+        if (( $use_idx == 1 )); then
+            echo -e "${COLOR_BLUE}vsm: ${COLOR_RED}ERR! ${COLOR_RESET}Index ${COLOR_PURPLE}$1${COLOR_RESET} is out of bounds"
+        else
+            echo -e "${COLOR_BLUE}vsm: ${COLOR_RED}ERR! ${COLOR_RESET}Entry with key ${COLOR_CYAN}$1${COLOR_RESET} not found"
+        fi
+    fi
+
+    echo -e $buffer > $PATH_REPOSITORY
+}
+
+#
+# Main thread.
+#
+if   [ "$1" == "" ] || [ "$1" == "dir" ] || [ "$1" == "d" ] || [ "$1" == "-d" ];         then vsm_directory $2
+elif [ "$1" == "add" ] || [ "$1" == "a" ] || [ "$1" == "-a" ];                           then vsm_add $2 $3 $4
+elif [ "$1" == "clean" ] || [ "$1" == "c" ] || [ "$1" == "-c" ];                         then vsm_clean $2
+elif [ "$1" == "help" ] || [ "$1" == "h" ] || [ "$1" == "-h" ];                          then vsm_help $2
+elif [ "$1" == "list" ] || [ "$1" == "ls" ] || [ "$1" == "l" ] || [ "$1" == "-l" ];      then vsm_list $2
+elif [ "$1" == "manage" ] || [ "$1" == "m" ] || [ "$1" == "-m" ];                        then vsm_manage $2
+elif [ "$1" == "ssh" ] || [ "$1" == "s" ] || [ "$1" == "-s" ];                           then vsm_ssh $2
+elif [ "$1" == "remove" ] || [ "$1" == "rm" ] || [ "$1" == "r" ] || [ "$1" == "-r" ];    then vsm_remove $2
+elif [ "$1" == "version" ] || [ "$1" == "v" ] || [ "$1" == "-v" ];                       then echo -e "0.6.0"
+else                                                                                     echo -e "${COLOR_BLUE}vsm: ${COLOR_RESET}Unsupported command:" $1
+fi
