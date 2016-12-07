@@ -27,10 +27,6 @@ Clone this repo and symlink to `/usr/local/bin` (you may need `sudo` access)
 git clone https://github.com/andrewscwei/vsm.git
 sudo ln -s /path/to/vsm /usr/local/bin
 ```
-Create an alias in your local `.bash_profile` or equivalent so `vsm` can directly execute commands like `ssh`
-```
-alias vsm=". vsm"
-```
 
 ## License
 
