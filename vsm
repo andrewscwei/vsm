@@ -185,6 +185,28 @@ function VSM_GET_ENTRY_BY_INDEX
 }
 
 #
+# Opens the provided path in the preferred editor.
+#
+function VSM_EDIT
+{
+    if [ "$1" == "" ]; then return; fi
+
+    if hash code 2>/dev/null; then
+        code "$1"
+    elif hash subl 2>/dev/null; then
+        subl "$1"
+    elif hash atom 2>/dev/null; then
+        atom "$1"
+    elif hash vim 2>/dev/null; then
+        vim "$1"
+    elif hash emacs 2>/dev/null; then
+        emacs "$1"
+    else
+        nano "$1"
+    fi
+}
+
+#
 # Displays the vsm directory.
 #
 function vsm_directory
@@ -410,11 +432,7 @@ function vsm_list
 #
 function vsm_manage
 {
-  if hash subl 2>/dev/null; then
-    subl "$PATH_REPOSITORY"
-  else
-    nano "$PATH_REPOSITORY"
-  fi
+  VSM_EDIT $PATH_REPOSITORY
 }
 
 #
