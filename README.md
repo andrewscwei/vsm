@@ -27,7 +27,3 @@ Clone this repo and symlink to `/usr/local/bin` (you may need `sudo` access)
 git clone https://github.com/andrewscwei/vsm.git
 sudo ln -s /path/to/vsm /usr/local/bin
 ```
-
-## License
-
-This software is released under the [MIT License](http://opensource.org/licenses/MIT).
