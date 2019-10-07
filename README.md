@@ -1,4 +1,4 @@
-# VARS SSH Manager (vsm) ![](https://img.shields.io/maintenance/no/2016)
+# VARS SSH Manager (vsm) ![](https://img.shields.io/maintenance/no/2017)
 
 A CLI tool that helps manage SSH hosts. VSM keeps track of SSH hosts in a local repository file and allows you to quickly act on any stored host based on its assigned key.
 
